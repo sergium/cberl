@@ -17,13 +17,17 @@
 -export([append/4, prepend/4]).
 %% retrieval operations
 -export([get_and_touch/3, get_and_lock/3, mget/2, get/2, unlock/3,
-         mget/3, getl/3, http/6, view/4, foldl/3, foldr/3, foreach/2]).
+         mget/3, getl/3, http/6, view/4, view/5, foldl/3, foldr/3, foreach/2]).
 %% removal operations
 -export([remove/2, flush/1, flush/2]).
 %% design doc opertations
 -export([set_design_doc/3, remove_design_doc/2, get_design_doc/2]).
+-export([set_design_doc/4, remove_design_doc/3, get_design_doc/3]).
 -deprecated({append, 4}).
 -deprecated({prepend, 4}).
+
+-define(DEFAULT_EXECUTE_TIMEOUT, 30000).
+
 
 %% @equiv start_link(PoolName, NumCon, "localhost:8091", "", "", "")
 start_link(PoolName, NumCon) ->
@@ -147,7 +151,7 @@ mtouch(PoolPid, Keys, ExpTimes) ->
         _ ->
             ExpTimes
     end,
-    execute(PoolPid, {mtouch, Keys, ExpTimesE}).
+    execute(PoolPid, {mtouch, Keys, ExpTimesE}, ?DEFAULT_EXECUTE_TIMEOUT).
 
 incr(PoolPid, Key, OffSet) ->
     arithmetic(PoolPid, Key, OffSet, 0, 0, 0).
@@ -191,7 +195,7 @@ get_and_lock(PoolPid, Key, Exp) ->
 
 -spec unlock(pid(), key(), integer()) -> ok | {error, _}.
 unlock(PoolPid, Key, Cas) ->
-    execute(PoolPid, {unlock, Key, Cas}).
+    execute(PoolPid, {unlock, Key, Cas}, ?DEFAULT_EXECUTE_TIMEOUT).
 
 %% @doc main store function takes care of all storing
 %% Instance libcouchbase instance to use
@@ -214,7 +218,8 @@ unlock(PoolPid, Key, Cas) ->
             integer(), integer()) -> ok | {error, _}.
 store(PoolPid, Op, Key, Value, TranscoderOpts, Exp, Cas) ->
     execute(PoolPid, {store, Op, Key, Value,
-                       TranscoderOpts, Exp, Cas}).
+                       TranscoderOpts, Exp, Cas},
+                     ?DEFAULT_EXECUTE_TIMEOUT).
 
 %% @doc get the value for the given key
 %% Instance libcouchbase instance to use
@@ -224,7 +229,7 @@ store(PoolPid, Op, Key, Value, TranscoderOpts, Exp, Cas) ->
 %%      pass a negative number for infinity
 -spec mget(pid(), [key()], integer()) -> list().
 mget(PoolPid, Keys, Exp) ->
-    execute(PoolPid, {mget, Keys, Exp, 0}).
+    execute(PoolPid, {mget, Keys, Exp, 0}, ?DEFAULT_EXECUTE_TIMEOUT).
 
 %% @doc Get an item with a lock that has a timeout
 %% Instance libcouchbase instance to use
@@ -233,7 +238,7 @@ mget(PoolPid, Keys, Exp) ->
 %%  Exp When the lock should expire
 -spec getl(pid(), key(), integer()) -> list().
 getl(PoolPid, Key, Exp) ->
-    execute(PoolPid, {mget, [Key], Exp, 1}).
+    execute(PoolPid, {mget, [Key], Exp, 1}, ?DEFAULT_EXECUTE_TIMEOUT).
 
 %% @doc perform an arithmetic operation on the given key
 %% Instance libcouchbase instance to use
@@ -246,14 +251,14 @@ getl(PoolPid, Key, Exp) ->
 -spec arithmetic(pid(), key(), integer(), integer(), integer(), integer()) ->
    ok | {error, _}.
 arithmetic(PoolPid, Key, OffSet, Exp, Create, Initial) ->
-    execute(PoolPid, {arithmetic, Key, OffSet, Exp, Create, Initial}).
+    execute(PoolPid, {arithmetic, Key, OffSet, Exp, Create, Initial}, ?DEFAULT_EXECUTE_TIMEOUT).
 
 %% @doc remove the value for given key
 %% Instance libcouchbase instance to use
 %% Key key to  remove
 -spec remove(pid(), key()) -> ok | {error, _}.
 remove(PoolPid, Key) ->
-    execute(PoolPid, {remove, Key, 0}).
+    execute(PoolPid, {remove, Key, 0}, ?DEFAULT_EXECUTE_TIMEOUT).
 
 %% @doc flush all documents from the bucket
 %% Instance libcouchbase Instance to use
@@ -263,14 +268,14 @@ flush(PoolPid, BucketName) ->
     FlushMarker = <<"__flush_marker_document__">>,
     set(PoolPid, FlushMarker, 0, ""),
     Path = string:join(["pools/default/buckets", BucketName, "controller/doFlush"], "/"),
-    Result = http(PoolPid, Path, "", "application/json", post, management),
+    Result = http(PoolPid, Path, "", "application/json", post, management, ?DEFAULT_EXECUTE_TIMEOUT),
     handle_flush_result(PoolPid, FlushMarker, Result).
 
 %% @doc flush all documents from the current bucket
 %% Instance libcouchbase Instance to use
 -spec flush(pid()) -> ok | {error, _}.
 flush(PoolPid) ->
-    {ok, BucketName} = execute(PoolPid, bucketname),
+    {ok, BucketName} = execute(PoolPid, bucketname, ?DEFAULT_EXECUTE_TIMEOUT),
     flush(PoolPid, BucketName).
 
 handle_flush_result(_, _, {ok, 200, _}) -> ok;
@@ -298,22 +303,30 @@ handle_flush_result(PoolPid, FlushMarker, Result={ok, 201, _}) ->
 -spec http(pid(), string(), string(), string(), http_method(), http_type())
 	  -> {ok, binary()} | {error, _}.
 http(PoolPid, Path, Body, ContentType, Method, Type) ->
-    execute(PoolPid, {http, Path, Body, ContentType, http_method(Method), http_type(Type)}).
+  http(PoolPid, Path, Body, ContentType, Method, Type, ?DEFAULT_EXECUTE_TIMEOUT).
+
+http(PoolPid, Path, Body, ContentType, Method, Type, Timeout) ->
+    execute(PoolPid, {http, Path, Body, ContentType, http_method(Method), http_type(Type)}, Timeout).
+
 
 %% @doc Query a view
 %% PoolPid pid of connection pool
 %% DocName design doc name
 %% ViewName view name
 %% Args arguments and filters (limit etc.)
-view(PoolPid, DocName, ViewName, Args) ->
+view(PoolPid, DocName, ViewName, Args, Timeout) ->
     Path = string:join(["_design", DocName, "_view", ViewName], "/"),
     Resp = case proplists:get_value(keys, Args) of
         undefined ->
-            http(PoolPid, string:join([Path, query_args(Args)], "?"), "", "application/json", get, view);
+            http(PoolPid, string:join([Path, query_args(Args)], "?"), "", "application/json", get, view, Timeout);
         Keys ->
-            http(PoolPid, string:join([Path, query_args(proplists:delete(keys, Args))], "?"), binary_to_list(iolist_to_binary(jiffy:encode({[{keys, Keys}]}))), "application/json", post, view)
+            http(PoolPid, string:join([Path, query_args(proplists:delete(keys, Args))], "?"), binary_to_list(iolist_to_binary(jiffy:encode({[{keys, Keys}]}))), "application/json", post, view, Timeout)
     end,
     decode_query_resp(Resp).
+
+view(PoolPid, DocName, ViewName, Args) ->
+  view(PoolPid, DocName, ViewName, Args, ?DEFAULT_EXECUTE_TIMEOUT).
+
 
 foldl(Func, Acc, {PoolPid, DocName, ViewName, Args}) ->
     case view(PoolPid, DocName, ViewName, Args) of
@@ -340,29 +353,38 @@ foreach(Func, {PoolPid, DocName, ViewName, Args}) ->
 %%% DESIGN DOCUMENT MANAGMENT %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-set_design_doc(PoolPid, DocName, DesignDoc) ->
+set_design_doc(PoolPid, DocName, DesignDoc, Timeout) ->
     Path = string:join(["_design", DocName], "/"),
-    Resp = http(PoolPid, Path, binary_to_list(iolist_to_binary(jiffy:encode(DesignDoc))), "application/json", put, view),
+    Resp = http(PoolPid, Path, binary_to_list(iolist_to_binary(jiffy:encode(DesignDoc))), "application/json", put, view, Timeout),
+    decode_update_design_doc_resp(Resp).
+
+set_design_doc(PoolPid, DocName, DesignDoc) ->
+  set_design_doc(PoolPid, DocName, DesignDoc, ?DEFAULT_EXECUTE_TIMEOUT).
+
+remove_design_doc(PoolPid, DocName, Timeout) ->
+    Path = string:join(["_design", DocName], "/"),
+    Resp = http(PoolPid, Path, "", "application/json", delete, view, Timeout),
     decode_update_design_doc_resp(Resp).
 
 remove_design_doc(PoolPid, DocName) ->
+  remove_design_doc(PoolPid, DocName, ?DEFAULT_EXECUTE_TIMEOUT).
+
+get_design_doc(PoolPid, DocName, Timeout) ->
     Path = string:join(["_design", DocName], "/"),
-    Resp = http(PoolPid, Path, "", "application/json", delete, view),
-    decode_update_design_doc_resp(Resp).
+    Resp = http(PoolPid, Path, "", "application/json", get, view, Timeout),
+    decode_get_design_doc_resp(Resp).
 
 get_design_doc(PoolPid, DocName) ->
-    Path = string:join(["_design", DocName], "/"),
-    HttpResp = http(PoolPid, Path, "", "application/json", get, view),
-    decode_get_design_doc_resp(HttpResp).
+  get_design_doc(PoolPid, DocName, ?DEFAULT_EXECUTE_TIMEOUT).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%    INTERNAL FUNCTIONS     %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-execute(PoolPid, Cmd) ->
+execute(PoolPid, Cmd, Timeout) ->
     poolboy:transaction(PoolPid, fun(Worker) ->
             gen_server:call(Worker, Cmd)
-       end).
+       end, Timeout).
 
 http_type(view) -> 0;
 http_type(management) -> 1;
