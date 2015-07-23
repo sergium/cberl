@@ -383,8 +383,8 @@ get_design_doc(PoolPid, DocName) ->
 
 execute(PoolPid, Cmd, Timeout) ->
     poolboy:transaction(PoolPid, fun(Worker) ->
-            gen_server:call(Worker, Cmd)
-       end, Timeout).
+            gen_server:call(Worker, Cmd, Timeout)
+       end).
 
 http_type(view) -> 0;
 http_type(management) -> 1;
