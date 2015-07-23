@@ -21,7 +21,7 @@
 %% removal operations
 -export([remove/2, flush/1, flush/2]).
 %% design doc opertations
--export([set_design_doc/3, remove_design_doc/2]).
+-export([set_design_doc/3, remove_design_doc/2, get_design_doc/2]).
 -deprecated({append, 4}).
 -deprecated({prepend, 4}).
 
@@ -350,6 +350,11 @@ remove_design_doc(PoolPid, DocName) ->
     Resp = http(PoolPid, Path, "", "application/json", delete, view),
     decode_update_design_doc_resp(Resp).
 
+get_design_doc(PoolPid, DocName) ->
+    Path = string:join(["_design", DocName], "/"),
+    HttpResp = http(PoolPid, Path, "", "application/json", get, view),
+    decode_get_design_doc_resp(HttpResp).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%    INTERNAL FUNCTIONS     %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -389,6 +394,19 @@ decode_update_design_doc_resp({ok, _Http_Code, Resp}) ->
             {error, {view_error(Error), Reason}};
     _Other -> {error, {unknown_error, Resp}}
   end.
+
+decode_get_design_doc_resp({ok, Http_Code, Resp}) when 200 =< Http_Code andalso Http_Code < 300 ->
+  jiffy:decode(Resp);
+decode_get_design_doc_resp({ok, _Http_Code, Resp}) ->
+  case jiffy:decode(Resp) of
+    {[{<<"error">>, Error}, {<<"reason">>, Reason}]} ->
+      {error, {view_error(Error), Reason}};
+    _Other ->
+      {error, {unknown_error, Resp}}
+  end;
+decode_get_design_doc_resp({error, _} = E) ->
+  E.
+
 
 query_arg({descending, true}) -> "descending=true";
 query_arg({descending, false}) -> "descending=false";
