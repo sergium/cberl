@@ -8,3 +8,18 @@ priv
 erl_crash.dump
 .idea
 *.iml
+
+## rebar3 ignores:
+.rebar3
+_*
+*.swp
+*.swo
+.erlang.cookie
+log
+.rebar
+_rel
+_deps
+_plugins
+_tdeps
+logs
+_build
