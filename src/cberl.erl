@@ -26,7 +26,7 @@
 -deprecated({append, 4}).
 -deprecated({prepend, 4}).
 
--define(DEFAULT_EXECUTE_TIMEOUT, 30000).
+-define(DEFAULT_EXECUTE_TIMEOUT, 5000).
 
 
 %% @equiv start_link(PoolName, NumCon, "localhost:8091", "", "", "")
